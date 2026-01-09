@@ -3,168 +3,304 @@
 <head>
 <meta charset="UTF-8">
 <title>Footblaze Mobile</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: #0b6623;
-    font-family: Arial, sans-serif;
-  }
+body{margin:0;overflow:hidden;background:#0b6623;font-family:Arial}
+canvas{display:block;touch-action:none}
 
-  #ui {
-    position: fixed;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: white;
-    font-size: 18px;
-    background: rgba(0,0,0,0.5);
-    padding: 8px 16px;
-    border-radius: 10px;
-    z-index: 10;
-  }
+/* UI */
+#topUI{
+ position:fixed;top:8px;left:50%;
+ transform:translateX(-50%);
+ background:rgba(0,0,0,.6);
+ color:white;padding:8px 14px;
+ border-radius:12px;font-size:14px;z-index:10
+}
+#pause{position:fixed;top:8px;right:10px;
+ background:rgba(0,0,0,.6);color:white;
+ padding:10px;border-radius:50%;z-index:10}
 
-  canvas {
-    display: block;
-  }
+/* Buttons */
+.btn{
+ position:fixed;bottom:60px;
+ width:70px;height:70px;
+ border-radius:50%;
+ background:rgba(255,255,255,.2);
+ color:white;font-weight:bold;
+ display:flex;align-items:center;justify-content:center;
+}
+#pass{right:140px}
+#shoot{right:50px;bottom:140px}
+#sprint{right:50px}
+
+/* Joystick */
+#joyBase{
+ position:fixed;left:40px;bottom:60px;
+ width:120px;height:120px;
+ border-radius:50%;
+ background:rgba(255,255,255,.15)
+}
+#joyStick{
+ position:absolute;left:40px;top:40px;
+ width:40px;height:40px;border-radius:50%;
+ background:rgba(255,255,255,.5)
+}
+
+/* Stamina */
+#staminaBar{
+ position:fixed;bottom:10px;left:50%;
+ transform:translateX(-50%);
+ width:200px;height:8px;
+ background:#444;border-radius:5px
+}
+#stamina{
+ height:100%;width:100%;
+ background:lime;border-radius:5px
+}
 </style>
 </head>
 <body>
 
-<div id="ui">
-  <span id="score">Blue 0 - 0 Red</span> |
-  <span id="timer">03:00</span> |
-  <span id="half">1st Half</span>
+<div id="topUI">
+<span id="score">0 - 0</span> |
+<span id="time">03:00</span> |
+<span id="half">1st</span>
 </div>
+<div id="pause">⏸</div>
+
+<div id="joyBase"><div id="joyStick"></div></div>
+<div id="pass" class="btn">PASS</div>
+<div id="shoot" class="btn">SHOOT</div>
+<div id="sprint" class="btn">SPRINT</div>
+<div id="staminaBar"><div id="stamina"></div></div>
 
 <canvas id="game"></canvas>
 
 <script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
+/* CANVAS */
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+canvas.width=innerWidth;
+canvas.height=innerHeight;
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+/* FIELD */
+const pitch={w:4000,h:2200};
+const cam={x:0,y:0};
 
-// PITCH
-const pitch = { width: 3000, height: 1800 };
+/* BALL */
+const ball={x:2000,y:1100,vx:0,vy:0,r:8};
 
-// CAMERA
-const camera = { x: 0, y: 0 };
+/* MATCH */
+let time=180,half=1,last=Date.now();
+let blueScore=0,redScore=0;
+let paused=false;
 
-// BALL
-const ball = { x: 1500, y: 900, r: 8 };
+/* FORMATION 4-3-3 (BLUE) */
+const formation=[
+ {x:300,y:1100,role:"GK"},
+ {x:700,y:500},{x:700,y:900},{x:700,y:1300},{x:700,y:1700},
+ {x:1200,y:700},{x:1200,y:1100},{x:1200,y:1500},
+ {x:1700,y:600},{x:1700,y:1100},{x:1700,y:1600}
+];
 
-// PLAYER (controlled)
-const player = {
-  x: 1500,
-  y: 1000,
-  r: 16,
-  speed: 4
+const blue=formation.map(f=>({
+ x:f.x,y:f.y,r:14,
+ homeX:f.x,homeY:f.y,
+ role:f.role||"P",
+ stamina:100
+}));
+
+let controlled=10; // CF
+
+/* RED TEAM */
+const red=[];
+for(let i=0;i<7;i++){
+ red.push({x:2600,y:600+i*200,r:14});
+}
+
+/* GOALS */
+const goalLeft={x:0,y:900,w:40,h:400};
+const goalRight={x:pitch.w-40,y:900,w:40,h:400};
+
+/* JOYSTICK */
+let joy={dx:0,dy:0,active:false};
+const joyBase=document.getElementById("joyBase");
+const joyStick=document.getElementById("joyStick");
+
+joyBase.addEventListener("touchstart",()=>joy.active=true);
+joyBase.addEventListener("touchmove",e=>{
+ if(!joy.active)return;
+ const r=joyBase.getBoundingClientRect();
+ const t=e.touches[0];
+ joy.dx=(t.clientX-(r.left+60))/25;
+ joy.dy=(t.clientY-(r.top+60))/25;
+ joyStick.style.left=40+joy.dx*10+"px";
+ joyStick.style.top=40+joy.dy*10+"px";
+});
+joyBase.addEventListener("touchend",()=>{
+ joy.active=false;joy.dx=joy.dy=0;
+ joyStick.style.left="40px";
+ joyStick.style.top="40px";
+});
+
+/* BUTTONS */
+document.getElementById("pause").onclick=()=>paused=!paused;
+
+document.getElementById("pass").onclick=()=>{
+ let nearest=null,min=9999;
+ blue.forEach((p,i)=>{
+  if(i===controlled)return;
+  const d=Math.hypot(p.x-blue[controlled].x,p.y-blue[controlled].y);
+  if(d<min){min=d;nearest=p;}
+ });
+ if(nearest){
+  ball.vx=(nearest.x-ball.x)*0.08;
+  ball.vy=(nearest.y-ball.y)*0.08;
+ }
 };
 
-// SCORE & TIME
-let blueScore = 0;
-let redScore = 0;
-let half = 1;
-let timeLeft = 180; // 3 minutes
-let lastTime = Date.now();
+document.getElementById("shoot").ontouchstart=()=>{
+ ball.vx=(blue[controlled].x-ball.x)*0.3;
+ ball.vy=(blue[controlled].y-ball.y)*0.3;
+};
 
-// INPUT
-const keys = {};
-window.addEventListener("keydown", e => keys[e.key] = true);
-window.addEventListener("keyup", e => keys[e.key] = false);
+document.getElementById("sprint").ontouchstart=()=>{
+ blue[controlled].speed=6;
+};
+document.getElementById("sprint").ontouchend=()=>{
+ blue[controlled].speed=4;
+};
 
-// GAME LOOP
-function update() {
-  // PLAYER MOVEMENT
-  if (keys["ArrowUp"]) player.y -= player.speed;
-  if (keys["ArrowDown"]) player.y += player.speed;
-  if (keys["ArrowLeft"]) player.x -= player.speed;
-  if (keys["ArrowRight"]) player.x += player.speed;
-
-  // CAMERA FOLLOWS PLAYER (SMOOTH)
-  camera.x += ((player.x - canvas.width/2) - camera.x) * 0.05;
-  camera.y += ((player.y - canvas.height/2) - camera.y) * 0.05;
-
-  camera.x = Math.max(0, Math.min(camera.x, pitch.width - canvas.width));
-  camera.y = Math.max(0, Math.min(camera.y, pitch.height - canvas.height));
-
-  // TIMER
-  const now = Date.now();
-  if (now - lastTime >= 1000) {
-    timeLeft--;
-    lastTime = now;
-
-    if (timeLeft <= 0) {
-      if (half === 1) {
-        half = 2;
-        timeLeft = 180;
-      } else {
-        alert("Match Ended!");
-        timeLeft = 0;
-      }
-    }
+/* PLAYER SWITCH (TAP) */
+canvas.addEventListener("touchstart",e=>{
+ const t=e.touches[0];
+ blue.forEach((p,i)=>{
+  const sx=p.x-cam.x, sy=p.y-cam.y;
+  if(Math.hypot(t.clientX-sx,t.clientY-sy)<30){
+   controlled=i;
   }
+ });
+});
+
+/* UPDATE */
+function update(){
+ if(paused)return;
+
+ const p=blue[controlled];
+ p.speed=p.speed||4;
+ p.x+=joy.dx*p.speed;
+ p.y+=joy.dy*p.speed;
+
+ // RETURN TO FORMATION
+ blue.forEach((pl,i)=>{
+  if(i!==controlled){
+   pl.x+=(pl.homeX-pl.x)*0.01;
+   pl.y+=(pl.homeY-pl.y)*0.01;
+  }
+ });
+
+ // BALL
+ ball.x+=ball.vx;
+ ball.y+=ball.vy;
+ ball.vx*=0.97;
+ ball.vy*=0.97;
+
+ // GK AI
+ const gk=blue[0];
+ gk.y+=(ball.y-gk.y)*0.05;
+ if(Math.hypot(ball.x-gk.x,ball.y-gk.y)<40){
+  ball.vx=8; ball.vy=(Math.random()-0.5)*6;
+ }
+
+ // RED AI
+ red.forEach(r=>{
+  r.x+=(ball.x-r.x)*0.002;
+  r.y+=(ball.y-r.y)*0.002;
+ });
+
+ // GOALS
+ if(ball.x<goalLeft.x+goalLeft.w &&
+    ball.y>goalLeft.y && ball.y<goalLeft.y+goalLeft.h){
+  redScore++; reset();
+ }
+ if(ball.x>goalRight.x &&
+    ball.y>goalRight.y && ball.y<goalRight.y+goalRight.h){
+  blueScore++; reset();
+ }
+
+ // CAMERA
+ cam.x+=(p.x-canvas.width/2-cam.x)*0.05;
+ cam.y+=(p.y-canvas.height/2-cam.y)*0.05;
+ cam.x=Math.max(0,Math.min(cam.x,pitch.w-canvas.width));
+ cam.y=Math.max(0,Math.min(cam.y,pitch.h-canvas.height));
+
+ // TIMER
+ if(Date.now()-last>1000){
+  time--;last=Date.now();
+  if(time<=0){
+   if(half===1){half=2;time=180}
+   else alert("Match Ended");
+  }
+ }
 }
 
-function drawPitch() {
-  ctx.fillStyle = "#1e7f3b";
-  ctx.fillRect(-camera.x, -camera.y, pitch.width, pitch.height);
-
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 5;
-
-  // Center line
-  ctx.beginPath();
-  ctx.moveTo(pitch.width/2 - camera.x, -camera.y);
-  ctx.lineTo(pitch.width/2 - camera.x, pitch.height - camera.y);
-  ctx.stroke();
-
-  // Center circle
-  ctx.beginPath();
-  ctx.arc(pitch.width/2 - camera.x, pitch.height/2 - camera.y, 120, 0, Math.PI * 2);
-  ctx.stroke();
+/* RESET */
+function reset(){
+ ball.x=2000;ball.y=1100;
+ ball.vx=ball.vy=0;
+ blue.forEach(p=>{p.x=p.homeX;p.y=p.homeY});
 }
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+/* DRAW */
+function draw(){
+ ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  drawPitch();
+ // FIELD
+ ctx.fillStyle="#1e7f3b";
+ ctx.fillRect(-cam.x,-cam.y,pitch.w,pitch.h);
+ ctx.strokeStyle="white";
+ ctx.strokeRect(-cam.x,-cam.y,pitch.w,pitch.h);
 
-  // BALL
-  ctx.fillStyle = "white";
+ // GOALS
+ ctx.fillRect(goalLeft.x-cam.x,goalLeft.y-cam.y,goalLeft.w,goalLeft.h);
+ ctx.fillRect(goalRight.x-cam.x,goalRight.y-cam.y,goalRight.w,goalRight.h);
+
+ // BALL
+ ctx.beginPath();
+ ctx.arc(ball.x-cam.x,ball.y-cam.y,ball.r,0,7);
+ ctx.fill();
+
+ // PLAYERS
+ blue.forEach((pl,i)=>{
+  ctx.fillStyle="blue";
   ctx.beginPath();
-  ctx.arc(ball.x - camera.x, ball.y - camera.y, ball.r, 0, Math.PI * 2);
+  ctx.arc(pl.x-cam.x,pl.y-cam.y,pl.r,0,7);
   ctx.fill();
 
-  // PLAYER
-  ctx.fillStyle = "blue";
+  if(i===controlled){
+   ctx.strokeStyle="yellow";
+   ctx.beginPath();
+   ctx.arc(pl.x-cam.x,pl.y-cam.y,pl.r+6,0,7);
+   ctx.stroke();
+  }
+ });
+
+ ctx.fillStyle="red";
+ red.forEach(r=>{
   ctx.beginPath();
-  ctx.arc(player.x - camera.x, player.y - camera.y, player.r, 0, Math.PI * 2);
+  ctx.arc(r.x-cam.x,r.y-cam.y,r.r,0,7);
   ctx.fill();
+ });
 
-  // UI
-  document.getElementById("score").innerText =
-    `Blue ${blueScore} - ${redScore} Red`;
-
-  document.getElementById("half").innerText =
-    half === 1 ? "1st Half" : "2nd Half";
-
-  const min = Math.floor(timeLeft / 60);
-  const sec = timeLeft % 60;
-  document.getElementById("timer").innerText =
-    `${String(min).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+ document.getElementById("score").innerText=`${blueScore} - ${redScore}`;
+ document.getElementById("time").innerText=
+ `${String(Math.floor(time/60)).padStart(2,"0")}:${String(time%60).padStart(2,"0")}`;
+ document.getElementById("half").innerText=half===1?"1st":"2nd";
 }
 
-function gameLoop() {
-  update();
-  draw();
-  requestAnimationFrame(gameLoop);
-}
-
-gameLoop();
+/* LOOP */
+function loop(){update();draw();requestAnimationFrame(loop)}
+loop();
 </script>
 </body>
 </html>
